@@ -4,6 +4,9 @@ from pymongo import MongoClient
 from datetime import datetime
 import os
 from dotenv import load_dotenv
+import random
+import string
+
 
 dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
 load_dotenv(dotenv_path)
@@ -19,6 +22,45 @@ if not mongo_url:
 client = MongoClient(mongo_url)
 db = client.github_events
 collection = db.logs
+secret_collection = db.secrets  
+
+
+def generate_secret_code(length=8):
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+
+@app.route("/secret/create", methods=["POST"])
+def create_secret():
+    body = request.get_json(silent=True)
+    name = body.get("name")
+    message = body.get("message")
+
+    if not name or not message:
+        return jsonify({"error": "name and message are required"}), 400
+
+    secret_code = generate_secret_code()
+
+    while secret_collection.find_one({"secret": secret_code}):
+        secret_code = generate_secret_code()
+
+    doc = {
+        "secret": secret_code,
+        "name": name,
+        "message": message,
+        "created_at": datetime.utcnow().isoformat()
+    }
+
+    secret_collection.insert_one(doc)
+
+    return jsonify({"status": "ok", "secret": secret_code}), 201
+
+
+@app.route("/secret/<code>", methods=["GET"])
+def get_secret(code):
+    doc = secret_collection.find_one({"secret": code})
+    if not doc:
+        return jsonify({"error": "Invalid or expired secret code"}), 404
+
+    return jsonify({"name": doc["name"], "message": doc["message"]}), 200
 
 
 def parse_event(event_type, payload):
